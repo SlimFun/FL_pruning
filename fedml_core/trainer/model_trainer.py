@@ -12,6 +12,9 @@ class ModelTrainer(ABC):
         self.model = model
         self.id = 0
         self.args = args
+        self.keep_masks = None
+        self.init_masks = None
+        self.init_params = None
 
     def set_id(self, trainer_id):
         self.id = trainer_id

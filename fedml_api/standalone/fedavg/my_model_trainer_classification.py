@@ -1,8 +1,10 @@
+from copy import copy
 import imp
 import logging
 
 import torch
-from torch import nn
+# from torch import nn
+import torch.nn as nn
 
 from fedml_api.model.SNIP.snip import SNIP
 
@@ -12,11 +14,54 @@ except ImportError:
     from FedML.fedml_core.trainer.model_trainer import ModelTrainer
 
 import json
+import numpy as np
+
 
 
 class MyModelTrainer(ModelTrainer):
     def get_model_params(self):
         return self.model.cpu().state_dict()
+
+    def apply_network_masks(self, keep_masks):
+        prunable_layers = filter(
+            lambda layer: isinstance(layer, nn.Conv2d) or isinstance(
+                layer, nn.Linear), self.model.modules())
+
+        for layer, keep_mask in zip(prunable_layers, keep_masks):
+            assert (layer.weight.shape == keep_mask.shape)
+
+            layer.weight.data[keep_mask == 0.] = 0.
+        # prunable_layers = filter(
+        #     lambda layer: isinstance(layer, nn.Conv2d) or isinstance(
+        #         layer, nn.Linear), self.model.modules())
+
+        # sum_zeros = 0
+        # for k, keep_masks in keep_masks_dict.items():
+        #     logging.info(f'prun masks from {k}')
+        #     for layer, keep_mask in zip(prunable_layers, keep_masks):
+        #         assert (layer.weight.shape == keep_mask.shape)
+
+        #         layer.weight.data[keep_mask == 0.] = 0.
+        #         #  sum(np.where(diff, 0, 1))
+        #         sum_zeros += sum(np.where(keep_mask.view(-1).numpy(), 0, 1))
+        # logging.info(f'^^^^^^^^^^^^^^^^sum_zero: {sum_zeros}')
+        # pass
+
+    def get_model_gradient(self):
+        finish_params = self.get_model_params()
+        # count = 0 
+        for param_tensor in self.init_params:
+            finish_params[param_tensor] -= self.init_params[param_tensor]
+            # self.init_params[param_tensor] -= finish_params[param_tensor]
+            # diff_params = init_params[param_tensor] - finish_params[param_tensor]
+            # diff_params = diff_params.view(-1).numpy()
+            # print(diff_params)
+            # count += sum(np.where(diff_params, 0, 1))
+            # logging.info(sum(np.where(diff_params, 0, 1)))
+        #     gradient = self.init_params[param_tensor].view(-1).numpy()
+        #     count += sum(np.where(gradient, 0, 1))
+        # logging.info(f'########gradient: {count}')
+        return finish_params
 
     def set_model_params(self, model_parameters):
         self.model.load_state_dict(model_parameters)
@@ -40,6 +85,7 @@ class MyModelTrainer(ModelTrainer):
                 """
 
                 def hook(grads):
+                    # return grads * keep_mask
                     return grads * keep_mask
 
                 return hook
@@ -49,8 +95,9 @@ class MyModelTrainer(ModelTrainer):
 
             # Step 1: Set the masked weights to zero (NB the biases are ignored)
             # Step 2: Make sure their gradients remain zero
-            # layer.weight.data[keep_mask == 0.] = 0.
-            handles.append(layer.weight.register_hook(hook_factory(keep_mask)))
+            layer.weight.data[keep_mask == 0.] = 0.
+            layer.weight.register_hook(hook_factory(keep_mask))
+            # handles.append(layer.weight.register_hook(hook_factory(keep_mask)))
         return handles
 
     # def rebuild_net(self, net, keep_masks):
@@ -89,12 +136,31 @@ class MyModelTrainer(ModelTrainer):
             f.write('\n')
 
     def train(self, train_data, device, args):
+        # return
+        
         model = self.model
-
         model.to(device)
 
-        keep_masks = SNIP(model, 0.1, train_data, device)
-        handles = self.apply_prune_mask(model, keep_masks)
+        handles = None
+        if self.keep_masks == None: 
+            self.keep_masks = SNIP(self.model, 0.1, train_data, device)
+            handles = self.apply_prune_mask(self.model, self.keep_masks)
+        # self.record_keep_masks(self.keep_masks)
+        
+        self.init_params = self.get_model_params()
+        model.to(device)
+        # if args.only_1r_prun and (self.keep_masks == None):
+        #     logging.info(f'client {self.id} pruning network')
+        #     # self.keep_masks = SNIP(model, 0.1, train_data, device)
+        #     self.keep_masks = SNIP(self.model, 0.1, train_data, device)
+        #     self.record_keep_masks(self.keep_masks)
+        # handles = self.apply_prune_mask(self.model, self.keep_masks)
+        # else:
+
+        
+        # init_params = self.get_model_params()
+        # model.to(device)        
+        
 
         # self.record_keep_masks(keep_masks)
 
@@ -132,8 +198,19 @@ class MyModelTrainer(ModelTrainer):
             logging.info('Client Index = {}\tEpoch: {}\tLoss: {:.6f}'.format(
                 self.id, epoch, sum(epoch_loss) / len(epoch_loss)))
         # self.rebuild_net(model, keep_masks)
-        for h in handles:
-            h.remove()
+        if self.keep_masks == None: 
+            for h in handles:
+                h.remove()
+
+        # finish_params = self.get_model_params()
+        # count = 0
+        # for param_tensor in init_params:
+        #     diff_params = init_params[param_tensor] - finish_params[param_tensor]
+        #     diff_params = diff_params.view(-1).numpy()
+        #     # print(diff_params)
+        #     count += sum(np.where(diff_params, 0, 1))
+        #     # logging.info(sum(np.where(diff_params, 0, 1)))
+        # logging.info(count)
 
     def test(self, test_data, device, args):
         model = self.model

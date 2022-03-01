@@ -6,6 +6,7 @@ import time
 import numpy as np
 import torch
 import wandb
+import json
 
 from .utils import transform_list_to_tensor
 
@@ -31,6 +32,13 @@ class FedAVGAggregator(object):
         self.device = device
         self.model_dict = dict()
         self.sample_num_dict = dict()
+        
+        self.last_keep_masks = None
+
+        self.keep_masks_dict = dict()
+
+        self.pruned = False
+        
         self.flag_client_model_uploaded_dict = dict()
         for idx in range(self.worker_num):
             self.flag_client_model_uploaded_dict[idx] = False
@@ -41,11 +49,12 @@ class FedAVGAggregator(object):
     def set_global_model_params(self, model_parameters):
         self.trainer.set_model_params(model_parameters)
 
-    def add_local_trained_result(self, index, model_params, sample_num):
+    def add_local_trained_result(self, index, model_params, sample_num, local_keep_masks):
         logging.info("add_model. index = %d" % index)
         self.model_dict[index] = model_params
         self.sample_num_dict[index] = sample_num
         self.flag_client_model_uploaded_dict[index] = True
+        self.keep_masks_dict[index] = local_keep_masks
 
     def check_whether_all_receive(self):
         for idx in range(self.worker_num):
@@ -55,10 +64,22 @@ class FedAVGAggregator(object):
             self.flag_client_model_uploaded_dict[idx] = False
         return True
 
+    def merge_local_masks(self, keep_masks_dict):
+        for i in range(1, len(self.keep_masks_dict[0])):
+            for j in range(len(self.keep_masks_dict.keys())):
+                # params = self.keep_masks_dict[0][j].to('cpu')
+                self.keep_masks_dict[0][i] += self.keep_masks_dict[j][i].to('cuda:0')
+                # if j == len(self.keep_masks_dict.keys())-1:
+                #     diff = self.keep_masks_dict[0][i].view(-1).cpu().numpy()
+                #     self.keep_masks_dict[0][i] = np.where(diff, 0, 1)
+        return self.keep_masks_dict[0]
+
     def aggregate(self):
         start_time = time.time()
         model_list = []
         training_num = 0
+        last_params = self.get_global_model_params()
+        # torch.save(last_params, './debug/last_model.pt')
 
         for idx in range(self.worker_num):
             if self.args.is_mobile == 1:
@@ -78,13 +99,97 @@ class FedAVGAggregator(object):
                     averaged_params[k] = local_model_params[k] * w
                 else:
                     averaged_params[k] += local_model_params[k] * w
-
+        #     avg_p = averaged_params[k].view(-1).numpy()
+        #     count += sum(np.where(avg_p, 0, 1))
+        # logging.info(f'*********count: {count}')
         # update the global model which is cached at the server side
-        self.set_global_model_params(averaged_params)
+        # self.set_global_model_params(averaged_params)
+
+        # count = 0
+        # for param_tensor in averaged_params:
+        #     # diff_params = init_model.state_dict()[param_tensor] - comp_model.state_dict()[param_tensor]
+        #     diff_params = averaged_params[param_tensor].view(-1).numpy()
+        #     # print(diff_params)
+        #     count += sum(np.where(diff_params, 0, 1))
+        #     # break
+        # # print(count)
+        # logging.info(f'*********count: {count}')
+
+        # logging.info(averaged_params)
+
+        # before_params = copy.deepcopy(last_params)
+        # before_params = last_params.copy()
+
+        for param_tensor in last_params:
+            # logging.info(last_params[param_tensor].type())
+            # logging.info('*********************')
+            # logging.info(averaged_params[param_tensor].type())
+            # break
+            # p = copy.deepcopy(last_params[param_tensor])
+            # logging.info(last_params[param_tensor])
+            # logging.info('++++++++++++++++++')
+            # logging.info(averaged_params[param_tensor])
+            assert (last_params[param_tensor].shape == averaged_params[param_tensor].shape)
+            # last_params[param_tensor] = last_params[param_tensor].type(torch.FloatTensor)
+            last_params[param_tensor] = last_params[param_tensor].type_as(averaged_params[param_tensor])
+
+            # averaged_params[param_tensor] = averaged_params[param_tensor].type_as(last_params[param_tensor])
+
+            # b = last_params[param_tensor] - p
+            # logging.info(f'$$$$$$$$$$$: {sum(b)}')
+            last_params[param_tensor] += averaged_params[param_tensor]
+            # logging.info('=============')
+            # logging.info(last_params[param_tensor])
+
+        # count = 0
+        # for param_tensor in last_params:
+        #     diff = (last_params[param_tensor] - before_params[param_tensor]).view(-1).numpy()
+        #     count += sum(np.where(diff, 0, 1))
+        # logging.info(f'&&&&&&&&&&&&&diff: {count}')
+
+
+        self.set_global_model_params(last_params)
+        # if not self.pruned:
+        keep_masks = self.merge_local_masks(self.keep_masks_dict)
+        # zeros = 0
+        # for mask in keep_masks:
+        #     zeros += sum(np.where(mask.view(-1).cpu().numpy(), 0, 1))
+        # logging.info('*****************************************************before')
+        # logging.info(f'^^^^^^^^^^^^^^zeros:{zeros}')
+        # logging.info('*****************************************************after')
+        self.apply_network_masks(keep_masks)
+            # self.pruned = True
+        # if not self.pruned:
+        #     self.apply_network_masks()
+        #     self.pruned = True
+
+        # if self.last_keep_masks != None:
+        #     # for j in range(len(self.keep_masks_dict.keys())):
+        #     # self.record_keep_masks(self.last_keep_masks)
+        #     # self.record_keep_masks(self.keep_masks_dict[0])
+        #     count = 0
+        #     for i in range(len(self.keep_masks_dict[0])):
+        #         diff = self.last_keep_masks[i].cpu().view(-1).numpy() - self.keep_masks_dict[0][i].cpu().view(-1).numpy()
+        #         count += sum(np.where(diff, 0, 1))
+        #     logging.info(f'$$$$$$$$$$$$$$$$$$$$$$$$$$$diff: {count}')
+
+        # self.last_keep_masks = self.keep_masks_dict[0]
+        # self.record_keep_masks(self.last_keep_masks)
+        # logging.info(self.last_keep_masks[0].shape)
+        # self.record_keep_masks(self.keep_masks_dict[0])
 
         end_time = time.time()
         logging.info("aggregate time cost: %d" % (end_time - start_time))
-        return averaged_params
+        return last_params
+
+    def record_keep_masks(self, keep_masks):
+        masks = torch.cat([torch.flatten(x) for x in keep_masks]).to('cpu').tolist()
+        with open(f'./{0}_keep_masks.txt', 'a+') as f:
+            f.write(json.dumps(masks))
+            f.write('\n')
+
+    def apply_network_masks(self, keep_masks):
+        self.trainer.apply_network_masks(keep_masks)
 
     def client_sampling(self, round_idx, client_num_in_total, client_num_per_round):
         if client_num_in_total == client_num_per_round:

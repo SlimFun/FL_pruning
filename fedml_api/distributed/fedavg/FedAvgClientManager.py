@@ -13,6 +13,8 @@ except ImportError:
     from FedML.fedml_core.distributed.communication.message import Message
 from .message_define import MyMessage
 from .utils import transform_list_to_tensor, post_complete_message_to_sweep_process
+import torch
+import json
 
 
 class FedAVGClientManager(ClientManager):
@@ -67,7 +69,10 @@ class FedAVGClientManager(ClientManager):
         message = Message(MyMessage.MSG_TYPE_C2S_SEND_MODEL_TO_SERVER, self.get_sender_id(), receive_id)
         message.add_params(MyMessage.MSG_ARG_KEY_MODEL_PARAMS, weights)
         message.add_params(MyMessage.MSG_ARG_KEY_NUM_SAMPLES, local_sample_num)
+        message.add_params(MyMessage.MSG_ARG_KEY_KEEP_MASKS, self.trainer.trainer.keep_masks)
         self.send_message(message)
+
+    
 
     def __train(self):
         logging.info("#######training########### round_id = %d" % self.round_idx)

@@ -4,6 +4,9 @@ import sys
 
 from .message_define import MyMessage
 from .utils import transform_tensor_to_list, post_complete_message_to_sweep_process
+import torch
+
+from .utils import transform_list_to_tensor
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "../../../")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "../../../../FedML")))
@@ -33,6 +36,8 @@ class FedAVGServerManager(ServerManager):
         client_indexes = self.aggregator.client_sampling(self.round_idx, self.args.client_num_in_total,
                                                          self.args.client_num_per_round)
         global_model_params = self.aggregator.get_global_model_params()
+        torch.save(global_model_params, './debug/init_model.pt')
+
         if self.args.is_mobile == 1:
             global_model_params = transform_tensor_to_list(global_model_params)
         for process_id in range(1, self.size):
@@ -46,12 +51,33 @@ class FedAVGServerManager(ServerManager):
         sender_id = msg_params.get(MyMessage.MSG_ARG_KEY_SENDER)
         model_params = msg_params.get(MyMessage.MSG_ARG_KEY_MODEL_PARAMS)
         local_sample_number = msg_params.get(MyMessage.MSG_ARG_KEY_NUM_SAMPLES)
+        local_keep_masks = msg_params.get(MyMessage.MSG_ARG_KEY_KEEP_MASKS)
 
-        self.aggregator.add_local_trained_result(sender_id - 1, model_params, local_sample_number)
+        # import numpy as np
+        # logging.info(f'############from {sender_id}')
+
+        # if self.args.is_mobile == 1:
+        #     gradient = transform_list_to_tensor(model_params)
+
+        # count = 0
+        # for param_tensor in gradient:
+        #     # diff_params = init_model.state_dict()[param_tensor] - comp_model.state_dict()[param_tensor]
+        #     diff_params = gradient[param_tensor].view(-1).numpy()
+        #     # print(diff_params)
+        #     count += sum(np.where(diff_params, 0, 1))
+        #     # break
+        # # print(count)
+        # logging.info(f'*********count: {count}')
+
+        self.aggregator.add_local_trained_result(sender_id - 1, model_params, local_sample_number, local_keep_masks)
         b_all_received = self.aggregator.check_whether_all_receive()
         logging.info("b_all_received = " + str(b_all_received))
         if b_all_received:
             global_model_params = self.aggregator.aggregate()
+
+            # if self.round_idx % 1 == 0:
+            #     torch.save(global_model_params, f'./debug/{self.round_idx}_model.pt')
+
             self.aggregator.test_on_server_for_all_clients(self.round_idx)
 
             # start the next round
