@@ -75,8 +75,8 @@ class FedAVGServerManager(ServerManager):
         if b_all_received:
             global_model_params = self.aggregator.aggregate()
 
-            # if self.round_idx % 1 == 0:
-            #     torch.save(global_model_params, f'./debug/{self.round_idx}_model.pt')
+            if self.round_idx % 2 == 0:
+                torch.save(global_model_params, f'./debug/{self.round_idx}_model.pt')
 
             self.aggregator.test_on_server_for_all_clients(self.round_idx)
 

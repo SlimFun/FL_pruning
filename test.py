@@ -15,3 +15,4 @@ def factorization(num):
                 num = int(num/k)
                 break
     return factor
+

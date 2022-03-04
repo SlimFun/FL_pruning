@@ -96,8 +96,8 @@ class MyModelTrainer(ModelTrainer):
             # Step 1: Set the masked weights to zero (NB the biases are ignored)
             # Step 2: Make sure their gradients remain zero
             layer.weight.data[keep_mask == 0.] = 0.
-            layer.weight.register_hook(hook_factory(keep_mask))
-            # handles.append(layer.weight.register_hook(hook_factory(keep_mask)))
+            # layer.weight.register_hook(hook_factory(keep_mask))
+            handles.append(layer.weight.register_hook(hook_factory(keep_mask)))
         return handles
 
     # def rebuild_net(self, net, keep_masks):
@@ -142,9 +142,9 @@ class MyModelTrainer(ModelTrainer):
         model.to(device)
 
         handles = None
-        if self.keep_masks == None: 
-            self.keep_masks = SNIP(self.model, 0.1, train_data, device)
-            handles = self.apply_prune_mask(self.model, self.keep_masks)
+        # if self.keep_masks == None: 
+        self.keep_masks = SNIP(self.model, 0.1, train_data, device)
+        handles = self.apply_prune_mask(self.model, self.keep_masks)
         # self.record_keep_masks(self.keep_masks)
         
         self.init_params = self.get_model_params()
@@ -198,9 +198,11 @@ class MyModelTrainer(ModelTrainer):
             logging.info('Client Index = {}\tEpoch: {}\tLoss: {:.6f}'.format(
                 self.id, epoch, sum(epoch_loss) / len(epoch_loss)))
         # self.rebuild_net(model, keep_masks)
-        if self.keep_masks == None: 
-            for h in handles:
+        for h in handles:
                 h.remove()
+        # if self.keep_masks == None: 
+        #     for h in handles:
+        #         h.remove()
 
         # finish_params = self.get_model_params()
         # count = 0
